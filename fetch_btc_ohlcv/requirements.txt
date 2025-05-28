@@ -1,7 +1,8 @@
-functions-framework
+# crypto-indicator-service-docker/requirements.txt
 google-cloud-bigquery
 ccxt
-ta
 pandas
+ta
+Flask
+gunicorn
 numpy
-datetime
