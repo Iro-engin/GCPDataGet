@@ -1,0 +1,7 @@
+functions-framework
+google-cloud-bigquery
+ccxt
+ta
+pandas
+numpy
+datetime
