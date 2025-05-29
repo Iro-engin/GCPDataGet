@@ -6,4 +6,4 @@ ta
 Flask
 gunicorn
 numpy
-logging
+logging==0.4.9.9
