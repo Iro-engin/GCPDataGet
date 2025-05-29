@@ -7,14 +7,9 @@ from google.cloud import bigquery
 import os
 from datetime import datetime, timezone
 import numpy as np
-import logging
 import traceback # エラー詳細出力用
 
 app = Flask(__name__)
-
-# --- Logging Configuration ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 # --- Helper for Environment Variables ---
 def get_int_env_var(var_name: str, default_value: int) -> int:
@@ -23,7 +18,7 @@ def get_int_env_var(var_name: str, default_value: int) -> int:
     try:
         return int(value_str)
     except ValueError:
-        logger.warning(f"Invalid value for {var_name}: '{value_str}'. Using default: {default_value}.")
+        print(f"Warning: Invalid value for {var_name}: '{value_str}'. Using default: {default_value}.")
         return default_value
 
 # --- 環境変数 (Cloud Runサービスに設定) ---
@@ -50,12 +45,13 @@ def get_bq_client() -> bigquery.Client | None:
     global bigquery_client
     if bigquery_client is None:
         if not GCP_PROJECT_ID:
-            logger.error("GCP_PROJECT_ID environment variable is not set.")
+            print("Error: GCP_PROJECT_ID environment variable is not set.")
             return None
         try:
             bigquery_client = bigquery.Client(project=GCP_PROJECT_ID)
         except Exception as e:
-            logger.error(f"Failed to initialize BigQuery client: {e}", exc_info=True)
+            print(f"Error: Failed to initialize BigQuery client: {e}")
+            traceback.print_exc()
             return None
     return bigquery_client
 
@@ -76,7 +72,8 @@ def get_last_processed_timestamp(client: bigquery.Client, state_table_ref_str: s
         if results:
             return results[0].last_timestamp_ms
     except Exception as e:
-        logger.error(f"Error fetching last processed timestamp from {state_table_ref_str} for {config_key}: {e}", exc_info=True)
+        print(f"Error: Error fetching last processed timestamp from {state_table_ref_str} for {config_key}: {e}")
+        traceback.print_exc()
     return None
 
 def update_last_processed_timestamp(client: bigquery.Client, state_table_ref_str: str, config_key: str, new_timestamp_ms: int):
@@ -99,9 +96,10 @@ def update_last_processed_timestamp(client: bigquery.Client, state_table_ref_str
     try:
         query_job = client.query(merge_query, job_config=job_config)
         query_job.result()  # Wait for the job to complete
-        logger.info(f"Successfully updated last_timestamp_ms to {new_timestamp_ms} for {config_key} in {state_table_ref_str}")
+        print(f"Info: Successfully updated last_timestamp_ms to {new_timestamp_ms} for {config_key} in {state_table_ref_str}")
     except Exception as e:
-        logger.error(f"Error updating last processed timestamp in {state_table_ref_str} for {config_key}: {e}", exc_info=True)
+        print(f"Error: Error updating last processed timestamp in {state_table_ref_str} for {config_key}: {e}")
+        traceback.print_exc()
 
 
 def core_logic() -> tuple[str, int]:
@@ -116,30 +114,30 @@ def core_logic() -> tuple[str, int]:
     state_table_ref_str = f"{GCP_PROJECT_ID}.{BQ_DATASET_ID}.{BQ_STATE_TABLE_ID}"
     main_table_ref_str = f"{GCP_PROJECT_ID}.{BQ_DATASET_ID}.{BQ_TABLE_ID}"
 
-    logger.info(f"Logic triggered for {config_key}.")
-    logger.info(f"Calculating SMA({SMA_PERIOD}), EMA({EMA_PERIOD}), MACD({MACD_FAST_PERIOD},{MACD_SLOW_PERIOD},{MACD_SIGN_PERIOD}).")
-    logger.info(f"Target BigQuery table: {main_table_ref_str}")
-    logger.info(f"State table for timestamps: {state_table_ref_str}")
+    print(f"Info: Logic triggered for {config_key}.")
+    print(f"Info: Calculating SMA({SMA_PERIOD}), EMA({EMA_PERIOD}), MACD({MACD_FAST_PERIOD},{MACD_SLOW_PERIOD},{MACD_SIGN_PERIOD}).")
+    print(f"Info: Target BigQuery table: {main_table_ref_str}")
+    print(f"Info: State table for timestamps: {state_table_ref_str}")
 
     last_ts_ms = get_last_processed_timestamp(client, state_table_ref_str, config_key)
     fetch_params = {'limit': LIMIT_CANDLES}
     if last_ts_ms is not None:
         fetch_params['since'] = last_ts_ms + 1 # Fetch candles *after* the last one
-        logger.info(f"Fetching data since timestamp: {last_ts_ms + 1}")
+        print(f"Info: Fetching data since timestamp: {last_ts_ms + 1}")
     else:
-        logger.info("No last processed timestamp found. Fetching latest candles.")
+        print("Info: No last processed timestamp found. Fetching latest candles.")
 
     exchange_class = getattr(ccxt, EXCHANGE_ID)
     exchange = exchange_class({'enableRateLimit': True})
     
     ohlcv_raw = exchange.fetch_ohlcv(SYMBOL, timeframe=TIMEFRAME, params=fetch_params)
     if not ohlcv_raw:
-        logger.info(f"No new OHLCV data returned for {config_key} (since={fetch_params.get('since')}).")
+        print(f"Info: No new OHLCV data returned for {config_key} (since={fetch_params.get('since')}).")
         return f"No new OHLCV data returned for {config_key}.", 200 # 204 might be misinterpreted as no content to process by scheduler
 
     df = pd.DataFrame(ohlcv_raw, columns=['timestamp_ms', 'open', 'high', 'low', 'close', 'volume'])
     if df.empty:
-        logger.info(f"Fetched OHLCV data is empty for {config_key} after DataFrame conversion.")
+        print(f"Info: Fetched OHLCV data is empty for {config_key} after DataFrame conversion.")
         return f"Fetched OHLCV data is empty for {config_key}.", 200
         
     df['open'] = pd.to_numeric(df['open'])
@@ -188,35 +186,39 @@ def core_logic() -> tuple[str, int]:
         if last_ts_ms is None or latest_inserted_timestamp_ms > last_ts_ms:
             update_last_processed_timestamp(client, state_table_ref_str, config_key, latest_inserted_timestamp_ms)
         else:
-            logger.info(f"No newer data processed. Last known timestamp {last_ts_ms}, latest in batch {latest_inserted_timestamp_ms}.")
+            print(f"Info: No newer data processed. Last known timestamp {last_ts_ms}, latest in batch {latest_inserted_timestamp_ms}.")
         return f"Successfully loaded {len(rows_to_insert)} rows into {main_table_ref_str}", 200
     else:
-        logger.error(f"Errors encountered while inserting rows into {main_table_ref_str}: {errors}")
+        print(f"Error: Errors encountered while inserting rows into {main_table_ref_str}: {errors}")
         return f"Errors encountered while inserting rows into {main_table_ref_str}: {errors}", 500
 
 @app.route('/', methods=['POST', 'GET']) # Cloud Schedulerからの呼び出しを想定 (POST推奨)
 def handler():
     """ HTTPリクエストを受け付けてメインロジックを実行するハンドラ """
     try:
+        print(f"Info: Handler invoked by {flask_request.method} request from {flask_request.remote_addr}")
         message, status_code = core_logic()
-        # Message already logged within core_logic or by error handlers
+        print(f"Info: Core logic finished. Status: {status_code}, Message: {message}")
         return message, status_code
     except ccxt.NetworkError as e:
         error_message = f"CCXT NetworkError: {e}"        
-        logger.error(error_message, exc_info=True)
+        print(f"Error: {error_message}")
+        traceback.print_exc()
         return error_message, 503
     except ccxt.ExchangeError as e:
         error_message = f"CCXT ExchangeError: {e} (Detail: {str(e.args)})"
-        logger.error(error_message, exc_info=True)
+        print(f"Error: {error_message}")
+        traceback.print_exc()
         return error_message, 502
     except AttributeError as e:
         error_message = f"AttributeError (e.g., invalid exchange ID '{EXCHANGE_ID}' for ccxt or 'ta' lib): {e}"
-        logger.error(error_message, exc_info=True)
+        print(f"Error: {error_message}")
+        traceback.print_exc()
         return error_message, 400
     except Exception as e:
-        # traceback.format_exc() is automatically included by logger.error with exc_info=True
         error_message = f"An unexpected error occurred: {e}"
-        logger.error(error_message, exc_info=True)
+        print(f"Error: {error_message}")
+        traceback.print_exc()
         return error_message, 500
 
 if __name__ == "__main__":
