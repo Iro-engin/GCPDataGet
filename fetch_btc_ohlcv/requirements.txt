@@ -6,3 +6,4 @@ ta
 Flask
 gunicorn
 numpy
+logging
