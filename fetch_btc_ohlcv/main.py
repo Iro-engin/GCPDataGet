@@ -22,6 +22,8 @@ def get_int_env_var(var_name: str, default_value: int) -> int:
         return default_value
 
 # --- 環境変数 (Cloud Runサービスに設定) ---
+
+
 GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID')
 BQ_DATASET_ID = os.environ.get('BQ_DATASET_ID')
 BQ_TABLE_ID = os.environ.get('BQ_TABLE_ID')
